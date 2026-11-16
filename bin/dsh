@@ -1,0 +1,20 @@
+#!/bin/sh
+# 可选的 dsh 启动器包装：让 `dsh ssh-targets ...` 可用，而不修改 DSH 核心。
+#
+# 安装（需要你手动执行，因为 ~/.local/bin 不在本会话工作区内）：
+#   mkdir -p ~/.local/bin
+#   ln -sf /data/dsh/home/dsh-plugin-usre/dsh-ssh-key-vault/bin/dsh ~/.local/bin/dsh
+#   export PATH="$HOME/.local/bin:$PATH"   # 放进 shell 配置以持久化
+#
+# 注意：这会遮蔽真正的 dsh；除 ssh-targets 外的参数会原样转交。
+# 真实 dsh 路径可用 DSH_REAL_BIN 覆盖，默认 /usr/local/bin/dsh。
+set -eu
+self=$(readlink -f "$0")
+real_dsh=${DSH_REAL_BIN:-/usr/local/bin/dsh}
+
+if [ "${1:-}" = "ssh-targets" ]; then
+  shift
+  exec node "$(dirname "$self")/dsh-ssh-targets.mjs" "$@"
+fi
+
+exec "$real_dsh" "$@"

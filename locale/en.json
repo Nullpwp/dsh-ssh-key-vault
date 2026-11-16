@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "SSH key vault",
+    "description": "Upload unencrypted SSH private keys, keep remote host profiles, and grant key or host access per workspace."
+  },
+  "nav": "SSH keys"
+}

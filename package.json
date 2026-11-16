@@ -1,0 +1,36 @@
+{
+  "name": "@local/dsh-ssh-key-vault",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-managed SSH key vault and host profiles with per-workspace access grants for DSH Web.",
+  "type": "module",
+  "bin": {
+    "dsh-ssh-targets": "./bin/dsh-ssh-targets.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "bin/*.mjs",
+    "bin/dsh",
+    "scripts/*.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

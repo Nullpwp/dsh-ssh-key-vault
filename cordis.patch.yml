@@ -1,0 +1,3 @@
+- insert:
+    - id: ssh-key-vault
+      name: '@local/dsh-ssh-key-vault'
