@@ -29,6 +29,9 @@ window.__ModuleLoader__.load({
       'action.cancel': '取消',
       'action.edit': '编辑',
       'action.delete': '删除',
+      'action.download': '下载',
+      'action.downloading': '下载中…',
+      'action.confirmDownload': '确认下载',
       'action.rename': '重命名',
       'action.saveName': '保存名称',
       'action.selectAll': '全选',
@@ -44,6 +47,7 @@ window.__ModuleLoader__.load({
       'notice.uploaded': '已上传密钥「{name}」。',
       'notice.renamed': '已重命名为「{name}」。',
       'notice.keyDeleted': '密钥已删除。',
+      'notice.keyDownloaded': '已开始下载密钥「{name}」。',
       'notice.hostSaved': '主机「{label}」已保存。',
       'notice.hostDeleted': '主机已删除。',
       'notice.hostDeletedWithKey': '主机及其绑定密钥已删除。',
@@ -69,6 +73,8 @@ window.__ModuleLoader__.load({
       'keys.deleteHint': '删除会移除密钥文件，且无法从插件恢复。',
       'keys.confirmDelete': '确认删除密钥「{name}」？',
       'keys.confirmDeleteHint': '删除后无法恢复；若仍有主机引用该密钥，删除会被拒绝。',
+      'keys.confirmDownload': '确认下载密钥「{name}」？',
+      'keys.confirmDownloadHint': '私钥将以明文保存到下载目录；请仅在可信设备操作，并在用完后妥善保管或删除。',
       'hosts.formAddTitle': '新增主机档案',
       'hosts.formEditTitle': '编辑主机档案',
       'hosts.label': '主机名称',
@@ -113,6 +119,7 @@ window.__ModuleLoader__.load({
       'error.keyFingerprintFailed': '无法读取该私钥的指纹信息。',
       'error.keyTooLarge': '私钥文件不能超过 64 KiB。',
       'error.keyInUse': '该密钥仍被主机引用，请先删除或改绑这些主机。',
+      'error.keyFileMissing': '密钥文件不存在，可能已被移动或删除。',
       'error.keyNameConflict': '密钥名称已存在，请换一个名称。',
       'error.hostLabelConflict': '主机名称已存在，请换一个名称。',
       'error.invalidKeyContent': '文件不是受支持的 SSH 私钥。',
@@ -155,6 +162,9 @@ window.__ModuleLoader__.load({
       'action.cancel': 'Cancel',
       'action.edit': 'Edit',
       'action.delete': 'Delete',
+      'action.download': 'Download',
+      'action.downloading': 'Downloading…',
+      'action.confirmDownload': 'Confirm download',
       'action.rename': 'Rename',
       'action.saveName': 'Save name',
       'action.selectAll': 'Select all',
@@ -170,6 +180,7 @@ window.__ModuleLoader__.load({
       'notice.uploaded': 'Uploaded key “{name}”.',
       'notice.renamed': 'Renamed to “{name}”.',
       'notice.keyDeleted': 'Key deleted.',
+      'notice.keyDownloaded': 'Started downloading key “{name}”.',
       'notice.hostSaved': 'Host “{label}” saved.',
       'notice.hostDeleted': 'Host deleted.',
       'notice.hostDeletedWithKey': 'Host and its bound key deleted.',
@@ -195,6 +206,8 @@ window.__ModuleLoader__.load({
       'keys.deleteHint': 'Deleting removes the key file and cannot be undone from this plugin.',
       'keys.confirmDelete': 'Delete key “{name}”?',
       'keys.confirmDeleteHint': 'This cannot be undone. Deleting is refused while any host still references the key.',
+      'keys.confirmDownload': 'Download key “{name}”?',
+      'keys.confirmDownloadHint': 'The private key will be saved as plaintext in your download folder. Use a trusted device and delete the copy when done.',
       'hosts.formAddTitle': 'Add a host profile',
       'hosts.formEditTitle': 'Edit host profile',
       'hosts.label': 'Host name',
@@ -239,6 +252,7 @@ window.__ModuleLoader__.load({
       'error.keyFingerprintFailed': 'Could not read the fingerprint of this key.',
       'error.keyTooLarge': 'The private key file must not exceed 64 KiB.',
       'error.keyInUse': 'This key is still referenced by hosts. Delete or relink those hosts first.',
+      'error.keyFileMissing': 'The key file is missing. It may have been moved or deleted.',
       'error.keyNameConflict': 'That key name already exists. Choose another one.',
       'error.hostLabelConflict': 'That host name already exists. Choose another one.',
       'error.invalidKeyContent': 'The file is not a supported SSH private key.',
@@ -266,6 +280,7 @@ window.__ModuleLoader__.load({
       key_fingerprint_failed: 'error.keyFingerprintFailed',
       key_too_large: 'error.keyTooLarge',
       key_in_use: 'error.keyInUse',
+      key_file_missing: 'error.keyFileMissing',
       key_name_conflict: 'error.keyNameConflict',
       host_label_conflict: 'error.hostLabelConflict',
       invalid_key_content: 'error.invalidKeyContent',
@@ -494,6 +509,7 @@ window.__ModuleLoader__.load({
       const [renameId, setRenameId] = React.useState(null)
       const [renameValue, setRenameValue] = React.useState('')
       const [pendingDelete, setPendingDelete] = React.useState(null)
+      const [pendingDownload, setPendingDownload] = React.useState(null)
 
       const [hostForm, setHostForm] = React.useState({
         label: '',
@@ -646,6 +662,52 @@ window.__ModuleLoader__.load({
             params: { label: data.host?.label ?? payload.label },
           })
           resetHostForm()
+        } catch (failure) {
+          if (failure?.name !== 'AbortError') setNotice({ kind: 'error', error: failure })
+        } finally {
+          setBusy('')
+        }
+      }
+
+      async function handleDownload(key) {
+        setBusy('download')
+        setNotice(null)
+        try {
+          const response = await fetch(`${API}/keys/download`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            cache: 'no-store',
+            credentials: 'same-origin',
+            body: JSON.stringify({ id: key.id }),
+          })
+          if (!response.ok) {
+            let data
+            try {
+              data = await response.json()
+            } catch {
+              data = undefined
+            }
+            const failure = new Error('')
+            failure.code = data?.code || 'http_error'
+            failure.status = response.status
+            throw failure
+          }
+          const blob = await response.blob()
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = key.filename
+          anchor.rel = 'noopener'
+          document.body.appendChild(anchor)
+          anchor.click()
+          anchor.remove()
+          setTimeout(() => URL.revokeObjectURL(url), 1000)
+          setNotice({
+            kind: 'success',
+            key: 'notice.keyDownloaded',
+            params: { name: key.name },
+          })
+          setPendingDownload(null)
         } catch (failure) {
           if (failure?.name !== 'AbortError') setNotice({ kind: 'error', error: failure })
         } finally {
@@ -919,11 +981,64 @@ window.__ModuleLoader__.load({
                                 ),
                               ),
                             )
-                          : null,
+                          : pendingDownload === key.id
+                            ? h(
+                                'div',
+                                { className: 'skv-confirm' },
+                                h(
+                                  'div',
+                                  { className: 'skv-confirm-text' },
+                                  h(
+                                    'span',
+                                    { className: 'skv-confirm-title' },
+                                    t('keys.confirmDownload', { name: key.name }),
+                                  ),
+                                  h('span', { className: 'skv-confirm-hint' }, t('keys.confirmDownloadHint')),
+                                ),
+                                h(
+                                  'div',
+                                  { className: 'skv-actions' },
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: 'skv-btn skv-btn-primary',
+                                      disabled,
+                                      onClick: () => handleDownload(key),
+                                    },
+                                    busy === 'download' ? t('action.downloading') : t('action.confirmDownload'),
+                                  ),
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: 'skv-btn',
+                                      disabled,
+                                      onClick: () => setPendingDownload(null),
+                                    },
+                                    t('action.cancel'),
+                                  ),
+                                ),
+                              )
+                            : null,
                       ),
                       h(
                         'div',
                         { className: 'skv-item-actions' },
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'skv-btn skv-btn-small',
+                            disabled,
+                            onClick: () => {
+                              setPendingDownload(key.id)
+                              setPendingDelete(null)
+                              setRenameId(null)
+                            },
+                          },
+                          t('action.download'),
+                        ),
                         renameId === key.id
                           ? h(
                               'div',
@@ -978,6 +1093,7 @@ window.__ModuleLoader__.load({
                                   setRenameId(key.id)
                                   setRenameValue(key.name)
                                   setPendingDelete(null)
+                                  setPendingDownload(null)
                                 },
                               },
                               t('action.rename'),
@@ -991,6 +1107,7 @@ window.__ModuleLoader__.load({
                             onClick: () => {
                               setPendingDelete({ kind: 'key', id: key.id })
                               setRenameId(null)
+                              setPendingDownload(null)
                             },
                           },
                           t('action.delete'),

@@ -10,12 +10,12 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 密钥管理 | 在浏览器上传无口令 SSH 私钥；解析算法、位数与 SHA256 指纹；重命名；删除 |
+| 密钥管理 | 在浏览器上传无口令 SSH 私钥；解析算法、位数与 SHA256 指纹；重命名；下载；删除 |
 | 主机档案 | 维护名称、地址、端口、用户名、备注与关联密钥；增删改查 |
 | 工作区授权 | 按工作区勾选可用主机；主机绑定密钥，授权主机即同时授权其密钥 |
 | 按工作区展示 | 在「工作区授权」标签页选择工作区，查看已授权主机与随主机带出的密钥 |
 | Agent 工具 | 全局只读工具 `ssh_targets`：按工作区返回主机、端口、用户名、绑定密钥路径与现成 ssh 命令；不返回私钥正文，不发起连接 |
-| 不落私钥到浏览器 | 页面只展示名称、文件名、指纹、算法与位数，从不回传私钥内容，也不提供下载/导出 |
+| 私钥下载 | 页面默认只展示名称、文件名、指纹、算法与位数；点击「下载」并二次确认后，才通过同源 POST 返回一次明文私钥（`attachment`、`no-store`），不写入浏览器存储 |
 
 明确**不做**的事情：
 
@@ -23,7 +23,7 @@
 - 不支持带口令（passphrase）的私钥；
 - 不加密存储私钥；
 - 不导入、不联动 `dsh-push-deploy` 已有密钥；
-- 不提供私钥下载/导出，也不做系统级隔离。
+- 不做系统级隔离；下载的明文私钥副本需要自行保护。
 
 ---
 
@@ -103,9 +103,10 @@ curl -sS http://127.0.0.1:3080/ssh-key-vault
 
 上传过程中私钥只提交给本机 `POST /ssh-key-vault/keys/upload`，页面不会回显私钥内容，也不会把它写入浏览器存储。
 
-### 3.3 重命名与删除
+### 3.3 重命名、下载与删除
 
 - **重命名**：行内编辑名称，确认后立即生效；名称冲突返回 409（`key_name_conflict`）。
+- **下载**：行内点击「下载」，再确认一次；浏览器会把该私钥以原文件名保存到下载目录。响应为明文文件流，带 `Content-Disposition: attachment` 与 `Cache-Control: no-store`。请只在可信设备操作，用完后妥善保管或删除下载副本。
 - **删除**：行内二次确认（确认/取消），不使用浏览器原生弹窗。
   - 若仍有主机档案引用该密钥，删除会被拒绝（409，`key_in_use`），需要先删除或改绑主机；
   - 删除成功后，密钥元数据与密钥文件移除；授权只引用主机，不再存在单独的密钥授权；
@@ -271,6 +272,7 @@ rm -rf /data/dsh/ssh-key-vault
 | POST | `/ssh-key-vault/keys/upload` | `{ name?, filename, content }` 上传私钥 |
 | POST | `/ssh-key-vault/keys/rename` | `{ id, name }` 重命名 |
 | POST | `/ssh-key-vault/keys/delete` | `{ id }` 删除密钥 |
+| POST | `/ssh-key-vault/keys/download` | `{ id }` 下载明文私钥（非 JSON 响应，见 §7.5） |
 | POST | `/ssh-key-vault/hosts/save` | `{ id?, label, address, port, username, keyId, note? }` 新增或更新主机 |
 | POST | `/ssh-key-vault/hosts/delete` | `{ id }` 删除主机；绑定密钥不再被其他主机使用时一并删除 |
 | POST | `/ssh-key-vault/access/set` | `{ workspaceId, hostIds }` 覆盖式设置某工作区的主机授权 |
@@ -282,7 +284,8 @@ rm -rf /data/dsh/ssh-key-vault
 - 若带 `Origin`，必须与本站同源（`Origin` 等于 WebServer origin，或 Origin 的 host 等于请求 `Host`），否则 `403`（`origin_forbidden`）；本地 `curl` 不带 `Origin` 可通过；
 - 方法不匹配（如对 POST 路由发 GET）返回 `405`；
 - 所有响应带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`，不开放 CORS；
-- 所有变更类 POST 的响应会在 `ok` 之外返回操作结果（`key`/`host`/`deletedId`/`deletedKeyId`/`keyRetained`/`access`）与最新的 `state`，调用方无需再请求一次 `/state`。
+- 所有变更类 POST 的响应会在 `ok` 之外返回操作结果（`key`/`host`/`deletedId`/`deletedKeyId`/`keyRetained`/`access`）与最新的 `state`，调用方无需再请求一次 `/state`；
+- 唯一例外是 `/keys/download`：成功时返回私钥文件流而不是 JSON，失败时仍返回 JSON 错误。
 
 ### 7.2 state 结构
 
@@ -331,7 +334,7 @@ rm -rf /data/dsh/ssh-key-vault
 }
 ```
 
-响应中**不包含**私钥内容、绝对路径或 `relativePath`。`access` 只保存每个工作区被授权的主机；密钥通过主机的 `keyId` 关联。`capabilities.sshKeygen` 为 `false` 时无法上传（见故障排查）。
+响应中**不包含**私钥内容、绝对路径或 `relativePath`（`/keys/download` 只返回私钥文件流，不返回元数据 JSON）。`access` 只保存每个工作区被授权的主机；密钥通过主机的 `keyId` 关联。`capabilities.sshKeygen` 为 `false` 时无法上传（见故障排查）。
 
 ### 7.3 上传示例
 
@@ -357,7 +360,7 @@ jq -Rs '{name:"示例密钥", filename:"id_ed25519", content:.}' < ~/.ssh/id_ed2
 | --- | --- | --- |
 | 400 | `invalid_field`、`invalid_address`、`invalid_port`、`invalid_username`、`invalid_note`、`invalid_key_content`、`invalid_name`、`invalid_json`、`empty_body`、`invalid_body`、`invalid_access`、`invalid_workspace`、`workspace_not_found`、`key_not_found`、`invalid_key_id` | 参数缺失、校验失败、未知工作区、`access/set` 的 `hostIds` 引用了不存在的主机或传了旧字段 `keyIds` |
 | 403 | `origin_forbidden` | `Origin` 与本站不同源 |
-| 404 | `not_found`、`host_not_found` | 路由不存在，或重命名/删除/编辑的密钥、主机 ID 不存在 |
+| 404 | `not_found`、`host_not_found`、`key_file_missing` | 路由不存在；密钥/主机 ID 不存在；或下载时密钥文件缺失 |
 | 405 | `method_not_allowed` | 请求方法不匹配 |
 | 409 | `duplicate_key`、`key_in_use`、`key_name_conflict`、`host_label_conflict` | 重复指纹、密钥仍被主机引用、名称冲突 |
 | 413 | `body_too_large`、`key_too_large` | 请求体超过 256 KiB 或私钥超过 64 KiB |
@@ -367,6 +370,25 @@ jq -Rs '{name:"示例密钥", filename:"id_ed25519", content:.}' < ~/.ssh/id_ed2
 
 **同一 ID 在不同接口上的返回可能不同**：例如主机保存时引用不存在的密钥是 400（`key_not_found`），而重命名不存在的密钥是 404（`not_found`）；以 HTTP 状态码与响应中的 `code` 为准。
 
+### 7.5 下载私钥
+
+```bash
+curl -sS -X POST http://127.0.0.1:3080/ssh-key-vault/keys/download \
+  -H 'Content-Type: application/json' \
+  --data '{"id":"key_0123456789abcdef"}' \
+  -o id_ed25519
+```
+
+成功响应：
+
+```text
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="id_ed25519"
+Cache-Control: no-store
+```
+
+> 响应体就是明文私钥。不要把该请求的输出重定向到日志、终端历史或公共云盘；下载后请按私钥同等敏感级别保管。
+
 ---
 
 ## 8. 限制与安全提示
@@ -374,7 +396,7 @@ jq -Rs '{name:"示例密钥", filename:"id_ed25519", content:.}' < ~/.ssh/id_ed2
 - **明文存储**：私钥以 0600 明文保存在 `$DSH_HOME/ssh-key-vault/keys/`，没有加密、没有 KMS，备份与磁盘快照同样含明文。
 - **授权不是隔离**：工作区授权只记录「哪些主机可用」，主机再带出它绑定的密钥；不改变文件权限，同机同用户的进程（包括 Agent）可以绕过插件直接读文件。
 - **仅无口令私钥**：带口令私钥在导入时即被拒绝；请先解密或改用 `ssh-agent`（本插件不托管口令）。
-- **不可下载**：插件不提供私钥查看或导出；请自行保存原始私钥副本。
+- **可下载明文私钥**：下载接口会把私钥正文返回给浏览器并保存到下载目录；浏览器、系统备份、剪贴板和下载文件都可能留下明文副本，请只在可信设备操作，用完后妥善保管或删除。
 - **删除不可撤销**：删除密钥会同时删除密钥文件，无法从插件恢复；若仍有主机引用该密钥，删除会被拒绝。
 - **不接 push-deploy**：本插件与 `dsh-push-deploy` 完全独立，现有 `/data/dsh/push-deploy/keys` 中的密钥不会自动导入，需要手动上传。
 - **无 SSH 执行能力**：不测试连通性、不执行命令；Agent 只能通过只读的 `ssh_targets` 获取主机与密钥路径，真正连接仍需自行执行 `ssh`；主机档案仅作记录。
@@ -397,6 +419,7 @@ jq -Rs '{name:"示例密钥", filename:"id_ed25519", content:.}' < ~/.ssh/id_ed2
 | 上传返回 413 `key_too_large`/`body_too_large` | 文件超过 64 KiB 或请求体超过 256 KiB | 私钥文本通常只有几 KB；检查是否误传了其他文件 |
 | 删除密钥返回 409 `key_in_use` | 仍有主机引用该密钥 | 先删除主机或把主机改绑到其他密钥，再删除 |
 | 删除主机后密钥也消失了 | 该密钥不再被其他主机使用 | 预期行为；密钥仍被其他主机使用时只删主机、保留密钥 |
+| 下载返回 404 `key_file_missing` | `keys/` 中对应文件缺失，通常是备份/恢复不一致 | 从同一份备份恢复 `vault.json` 与 `keys/`；不要只恢复其中一个 |
 | 编辑/删除返回 404 | 密钥/主机 ID 不存在（可能已在另一标签页删除） | 刷新页面后重试 |
 | POST 返回 403 `origin_forbidden` | 反向代理改写了 `Origin`/`Host`，或跨站调用 | 从同源页面操作；代理需保持同源头 |
 | 页面提示「无法读取密钥库状态」，接口 500 | `vault.json` 损坏或不可读 | 恢复备份（§6.3）；不要直接删除 `keys/` |

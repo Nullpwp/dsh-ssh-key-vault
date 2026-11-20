@@ -246,6 +246,70 @@ test('upload validates with ssh-keygen, stores private files, and rejects duplic
   assert.equal(state.body.toString('utf8').includes('PRIVATE KEY'), false)
 })
 
+test('key download returns the private key once with attachment headers', { skip }, async (t) => {
+  const { store, ctx } = await setup(t)
+  const generated = await generateKey('download@example')
+  const uploaded = await uploadKey(ctx, store, generated.content, 'Download key')
+  assert.equal(uploaded.status, 200)
+  const keyId = uploaded.json.key.id
+
+  const download = await call(ctx, store, {
+    method: 'POST',
+    path: '/ssh-key-vault/keys/download',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: keyId }),
+  })
+  assert.equal(download.status, 200)
+  assert.equal(download.headers['content-type'], 'application/octet-stream')
+  assert.equal(download.headers['content-disposition'], 'attachment; filename="id_ed25519"')
+  assert.equal(download.headers['cache-control'], 'no-store')
+  assert.equal(download.headers['x-content-type-options'], 'nosniff')
+  assert.equal(download.body.toString('utf8'), generated.content)
+
+  const crossOrigin = await call(ctx, store, {
+    method: 'POST',
+    path: '/ssh-key-vault/keys/download',
+    headers: {
+      'content-type': 'application/json',
+      origin: 'https://evil.example',
+    },
+    body: JSON.stringify({ id: keyId }),
+  })
+  assert.equal(crossOrigin.status, 403)
+  assert.equal(crossOrigin.json.code, 'origin_forbidden')
+
+  const unknown = await call(ctx, store, {
+    method: 'POST',
+    path: '/ssh-key-vault/keys/download',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'key_missing' }),
+  })
+  assert.equal(unknown.status, 404)
+  assert.equal(unknown.json.code, 'not_found')
+
+  const wrongMethod = await call(ctx, store, { path: '/ssh-key-vault/keys/download' })
+  assert.equal(wrongMethod.status, 405)
+
+  const wrongType = await call(ctx, store, {
+    method: 'POST',
+    path: '/ssh-key-vault/keys/download',
+    headers: { 'content-type': 'text/plain' },
+    body: JSON.stringify({ id: keyId }),
+  })
+  assert.equal(wrongType.status, 415)
+
+  const keyPath = store.resolveKeyPath((await store.readVault()).keys[keyId].relativePath)
+  await fs.rm(keyPath)
+  const missingFile = await call(ctx, store, {
+    method: 'POST',
+    path: '/ssh-key-vault/keys/download',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: keyId }),
+  })
+  assert.equal(missingFile.status, 404)
+  assert.equal(missingFile.json.code, 'key_file_missing')
+})
+
 test('host profiles, key references, grants, and deletion rules work end to end', { skip }, async (t) => {
   const { store, ctx } = await setup(t)
   const first = await generateKey('first@example')
